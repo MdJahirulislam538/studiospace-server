@@ -1,5 +1,6 @@
 import express from "express";
 import { MongoClient, ObjectId } from "mongodb";
+import { createRemoteJWKSet, jwtVerify } from "jose";
 import cors from "cors";
 import "dotenv/config";
 
@@ -24,9 +25,49 @@ export async function connectToMongoDB() {
 
 await connectToMongoDB();
 const db = client.db("studiospace");
+const studioCollection = db.collection("studios");
+
+const verifyToken = async (req, res, next) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader) {
+    return res.status(401).send({ msg: "Unauthorized!" });
+  }
+  const token = authHeader.split(" ")[1];
+  if (!token) {
+    return res.status(401).send({ msg: "Unauthorized!" });
+  }
+
+  const JWKS = createRemoteJWKSet(
+    new URL(`${process.env.CLIENT_URL}/api/auth/jwks`),
+  );
+
+  try { 
+    const { payload } = await jwtVerify(token, JWKS);
+    next();
+  } catch (error) {
+    return res.status(500).send({ msg: "Server Error!" });
+  }
+};
+
+app.post("/add-studio", verifyToken, async (req, res) => {
+  const data = req.body;
+  const result = await studioCollection.insertOne(data);
+  res.send(result);
+});
+
+// app.post("/studios", verifyToken, async (req, res) => {
+//   const data = req.body;
+//   const result = await studioCollection.insertOne(data);
+//   res.send(result);
+// });
+
+app.get("/studios", async (req, res) => {
+  const result = await studioCollection.find().toArray();
+  res.send(result);
+});
 
 app.get("/", (req, res) => {
-  res.send("Hello World!");
+  res.send({message: "Server is running fine!"});
 });
 
 app.listen(PORT, () => {
