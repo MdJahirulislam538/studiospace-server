@@ -55,15 +55,36 @@ app.post("/add-studio", verifyToken, async (req, res) => {
   res.send(result);
 });
 
-// app.post("/studios", verifyToken, async (req, res) => {
-//   const data = req.body;
-//   const result = await studioCollection.insertOne(data);
-//   res.send(result);
-// });
-
 app.get("/studios", async (req, res) => {
   const result = await studioCollection.find().toArray();
   res.send(result);
+});
+
+app.get("/studios/:id", async (req, res) => {
+  try {
+    const id = req.params.id;
+    const result = await studioCollection.findOne({ _id: new ObjectId(id) });
+    if (!result) {
+      return res.status(404).send({ msg: "Studio not found" });
+    }
+    res.send(result);
+  } catch (error) {
+    res.status(400).send({ msg: "Invalid studio ID" });
+  }
+});
+
+app.put("/edit-studio/:id", verifyToken, async (req, res) => {
+  try {
+    const id = req.params.id;
+    const { _id, ...updateData } = req.body;
+    const result = await studioCollection.updateOne(
+      { _id: new ObjectId(id) },
+      { $set: updateData }
+    );
+    res.send(result);
+  } catch (error) {
+    res.status(500).send({ msg: "Failed to update studio" });
+  }
 });
 
 app.get("/", (req, res) => {
