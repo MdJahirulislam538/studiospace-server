@@ -1,16 +1,15 @@
-import express from 'express';
-import { MongoClient, ObjectId } from 'mongodb';
-import cors from 'cors';
-import 'dotenv/config';
-
+import express from "express";
+import { MongoClient, ObjectId } from "mongodb";
+import cors from "cors";
+import "dotenv/config";
 
 const app = express();
 app.use(express.json());
-const PORT = 8000;
+const PORT = process.env.PORT || 8000;
 
 app.use(cors());
 
-const client = new MongoClient(process.env.MONGODB_URL);
+const client = new MongoClient(process.env.MONGODB_URL?.trim());
 
 export async function connectToMongoDB() {
   try {
@@ -19,17 +18,17 @@ export async function connectToMongoDB() {
     return client;
   } catch (err) {
     console.dir(err);
+    return client;
   }
 }
 
-const mongoClient = await connectToMongoDB();
-const db = mongoClient.db("studiospace");
+await connectToMongoDB();
+const db = client.db("studiospace");
 
-
-app.get('/', (req, res) => {
-  res.send('Hello World!')
-})
+app.get("/", (req, res) => {
+  res.send("Hello World!");
+});
 
 app.listen(PORT, () => {
-  console.log(`Example app listening on port ${port}`)
-})
+  console.log(`Example app listening on port ${PORT}`);
+});
