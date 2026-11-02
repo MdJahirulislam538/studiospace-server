@@ -26,6 +26,7 @@ export async function connectToMongoDB() {
 await connectToMongoDB();
 const db = client.db("studiospace");
 const studioCollection = db.collection("studios");
+const bookingCollection = db.collection("bookings");
 
 const verifyToken = async (req, res, next) => {
   const authHeader = req.headers.authorization;
@@ -84,6 +85,33 @@ app.put("/edit-studio/:id", verifyToken, async (req, res) => {
     res.send(result);
   } catch (error) {
     res.status(500).send({ msg: "Failed to update studio" });
+  }
+});
+
+app.post("/bookings", async (req, res) => {
+  try {
+    const bookingData = {
+      ...req.body,
+      createdAt: req.body.createdAt || new Date().toISOString(),
+    };
+    const result = await bookingCollection.insertOne(bookingData);
+    res.status(201).send(result);
+  } catch (error) {
+    res.status(500).send({ msg: "Failed to create booking" });
+  }
+});
+
+app.get("/bookings", async (req, res) => {
+  try {
+    const email = req.query.email;
+    const query = email ? { userEmail: String(email) } : {};
+    const result = await bookingCollection
+      .find(query)
+      .sort({ createdAt: -1 })
+      .toArray();
+    res.send(result);
+  } catch (error) {
+    res.status(500).send({ msg: "Failed to fetch bookings" });
   }
 });
 
