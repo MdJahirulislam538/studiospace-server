@@ -92,6 +92,7 @@ app.post("/bookings", async (req, res) => {
   try {
     const bookingData = {
       ...req.body,
+      status: req.body.status || "Pending",
       createdAt: req.body.createdAt || new Date().toISOString(),
     };
     const result = await bookingCollection.insertOne(bookingData);
@@ -112,6 +113,44 @@ app.get("/bookings", async (req, res) => {
     res.send(result);
   } catch (error) {
     res.status(500).send({ msg: "Failed to fetch bookings" });
+  }
+});
+
+app.patch("/bookings/:id", async (req, res) => {
+  try {
+    const id = req.params.id;
+    const status = req.body.status || "Cancelled";
+    const result = await bookingCollection.updateOne(
+      { _id: new ObjectId(id) },
+      {
+        $set: {
+          status,
+          updatedAt: new Date().toISOString(),
+        },
+      }
+    );
+    res.send(result);
+  } catch (error) {
+    res.status(500).send({ msg: "Failed to update booking status" });
+  }
+});
+
+app.put("/bookings/:id", async (req, res) => {
+  try {
+    const id = req.params.id;
+    const status = req.body.status || "Cancelled";
+    const result = await bookingCollection.updateOne(
+      { _id: new ObjectId(id) },
+      {
+        $set: {
+          status,
+          updatedAt: new Date().toISOString(),
+        },
+      }
+    );
+    res.send(result);
+  } catch (error) {
+    res.status(500).send({ msg: "Failed to update booking status" });
   }
 });
 
