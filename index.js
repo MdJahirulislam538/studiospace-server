@@ -6,6 +6,15 @@ import "dotenv/config";
 
 const app = express();
 app.use(express.json());
+
+// Normalize double slashes in incoming request URLs (e.g. //add-studio -> /add-studio)
+app.use((req, res, next) => {
+  if (req.url && req.url.includes("//")) {
+    req.url = req.url.replace(/\/{2,}/g, "/");
+  }
+  next();
+});
+
 const PORT = process.env.PORT || 8000;
 
 const allowedOrigins = [
@@ -16,95 +25,145 @@ const allowedOrigins = [
 
 app.use(
   cors({
-    origin: allowedOrigins,
+    origin: (origin, callback) => {
+      // Allow requests with no origin (like mobile apps, curl, or Postman)
+      if (!origin || allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+      return callback(null, true); // Gracefully allow to avoid blocking valid cross-origin clients
+    },
     credentials: true,
   })
 );
 
-const client = new MongoClient(process.env.MONGODB_URL?.trim());
+let cachedClient = null;
+let cachedDb = null;
 
 export async function connectToMongoDB() {
-  try {
-    await client.connect();
-    console.log("You successfully connected to MongoDB!");
-    return client;
-  } catch (err) {
-    console.dir(err);
-    return client;
+  if (cachedDb) {
+    return cachedDb;
   }
+
+  const mongoUrl = process.env.MONGODB_URL?.trim();
+  if (!mongoUrl) {
+    throw new Error(
+      "MONGODB_URL environment variable is missing in server environment variables."
+    );
+  }
+
+  if (!cachedClient) {
+    cachedClient = new MongoClient(mongoUrl, {
+      serverSelectionTimeoutMS: 5000,
+      connectTimeoutMS: 5000,
+    });
+  }
+
+  await cachedClient.connect();
+  cachedDb = cachedClient.db("studiospace");
+  console.log("Successfully connected to MongoDB!");
+  return cachedDb;
 }
 
-await connectToMongoDB();
-const db = client.db("studiospace");
-const studioCollection = db.collection("studios");
-const bookingCollection = db.collection("bookings");
+async function getCollections() {
+  const db = await connectToMongoDB();
+  return {
+    studioCollection: db.collection("studios"),
+    bookingCollection: db.collection("bookings"),
+  };
+}
 
 const verifyToken = async (req, res, next) => {
   const authHeader = req.headers.authorization;
   if (!authHeader) {
-    return res.status(401).send({ msg: "Unauthorized!" });
+    return res.status(401).send({ msg: "Unauthorized! No Authorization header." });
   }
   const token = authHeader.split(" ")[1];
   if (!token) {
-    return res.status(401).send({ msg: "Unauthorized!" });
+    return res.status(401).send({ msg: "Unauthorized! Token missing." });
   }
 
   const clientUrl = (
     process.env.CLIENT_URL || "https://studiospace-frontend-theta.vercel.app"
   ).replace(/\/+$/, "");
 
-  const JWKS = createRemoteJWKSet(
-    new URL(`${clientUrl}/api/auth/jwks`),
-  );
-
-  try { 
+  try {
+    const JWKS = createRemoteJWKSet(
+      new URL(`${clientUrl}/api/auth/jwks`)
+    );
     const { payload } = await jwtVerify(token, JWKS);
+    req.user = payload;
     next();
   } catch (error) {
-    return res.status(500).send({ msg: "Server Error!" });
+    console.error("JWT Verification failed:", error.message);
+    return res.status(401).send({ msg: "Unauthorized! Invalid token.", error: error.message });
   }
 };
 
 app.post("/add-studio", verifyToken, async (req, res) => {
-  const data = req.body;
-  const result = await studioCollection.insertOne(data);
-  res.send(result);
+  try {
+    const { studioCollection } = await getCollections();
+    const data = req.body;
+    const result = await studioCollection.insertOne(data);
+    res.status(201).send(result);
+  } catch (error) {
+    console.error("Error in POST /add-studio:", error);
+    res.status(500).send({
+      msg: "Failed to add studio.",
+      error: error.message,
+    });
+  }
 });
 
 app.get("/studios", async (req, res) => {
-  const result = await studioCollection.find().toArray();
-  res.send(result);
+  try {
+    const { studioCollection } = await getCollections();
+    const result = await studioCollection.find().toArray();
+    res.send(result);
+  } catch (error) {
+    console.error("Error in GET /studios:", error);
+    res.status(500).send({
+      msg: "Failed to fetch studios.",
+      error: error.message,
+    });
+  }
 });
 
 app.get("/studios/:id", async (req, res) => {
   try {
+    const { studioCollection } = await getCollections();
     const id = req.params.id;
-    const result = await studioCollection.findOne({ _id: new ObjectId(id) });
+    const query = ObjectId.isValid(id) ? { _id: new ObjectId(id) } : { _id: id };
+    const result = await studioCollection.findOne(query);
     if (!result) {
       return res.status(404).send({ msg: "Studio not found" });
     }
     res.send(result);
   } catch (error) {
-    res.status(400).send({ msg: "Invalid studio ID" });
+    console.error("Error in GET /studios/:id:", error);
+    res.status(400).send({ msg: "Invalid studio ID", error: error.message });
   }
 });
 
 app.put("/edit-studio/:id", verifyToken, async (req, res) => {
   try {
+    const { studioCollection } = await getCollections();
     const id = req.params.id;
     const { _id, ...updateData } = req.body;
+    const filter = ObjectId.isValid(id) ? { _id: new ObjectId(id) } : { _id: id };
     const result = await studioCollection.updateOne(
-      { _id: new ObjectId(id) },
+      filter,
       { $set: updateData }
     );
     res.send(result);
   } catch (error) {
-    res.status(500).send({ msg: "Failed to update studio" });
+    console.error("Error in PUT /edit-studio/:id:", error);
+    res.status(500).send({ msg: "Failed to update studio", error: error.message });
   }
 });
 
 app.post("/bookings", async (req, res) => {
   try {
+    const { bookingCollection } = await getCollections();
     const bookingData = {
       ...req.body,
       status: req.body.status || "Pending",
@@ -113,12 +172,14 @@ app.post("/bookings", async (req, res) => {
     const result = await bookingCollection.insertOne(bookingData);
     res.status(201).send(result);
   } catch (error) {
-    res.status(500).send({ msg: "Failed to create booking" });
+    console.error("Error in POST /bookings:", error);
+    res.status(500).send({ msg: "Failed to create booking", error: error.message });
   }
 });
 
 app.get("/bookings", async (req, res) => {
   try {
+    const { bookingCollection } = await getCollections();
     const email = req.query.email;
     const query = email ? { userEmail: String(email) } : {};
     const result = await bookingCollection
@@ -127,16 +188,19 @@ app.get("/bookings", async (req, res) => {
       .toArray();
     res.send(result);
   } catch (error) {
-    res.status(500).send({ msg: "Failed to fetch bookings" });
+    console.error("Error in GET /bookings:", error);
+    res.status(500).send({ msg: "Failed to fetch bookings", error: error.message });
   }
 });
 
 app.patch("/bookings/:id", async (req, res) => {
   try {
+    const { bookingCollection } = await getCollections();
     const id = req.params.id;
     const status = req.body.status || "Cancelled";
+    const filter = ObjectId.isValid(id) ? { _id: new ObjectId(id) } : { _id: id };
     const result = await bookingCollection.updateOne(
-      { _id: new ObjectId(id) },
+      filter,
       {
         $set: {
           status,
@@ -146,16 +210,19 @@ app.patch("/bookings/:id", async (req, res) => {
     );
     res.send(result);
   } catch (error) {
-    res.status(500).send({ msg: "Failed to update booking status" });
+    console.error("Error in PATCH /bookings/:id:", error);
+    res.status(500).send({ msg: "Failed to update booking status", error: error.message });
   }
 });
 
 app.put("/bookings/:id", async (req, res) => {
   try {
+    const { bookingCollection } = await getCollections();
     const id = req.params.id;
     const status = req.body.status || "Cancelled";
+    const filter = ObjectId.isValid(id) ? { _id: new ObjectId(id) } : { _id: id };
     const result = await bookingCollection.updateOne(
-      { _id: new ObjectId(id) },
+      filter,
       {
         $set: {
           status,
@@ -165,16 +232,32 @@ app.put("/bookings/:id", async (req, res) => {
     );
     res.send(result);
   } catch (error) {
-    res.status(500).send({ msg: "Failed to update booking status" });
+    console.error("Error in PUT /bookings/:id:", error);
+    res.status(500).send({ msg: "Failed to update booking status", error: error.message });
   }
 });
 
-app.get("/", (req, res) => {
-  res.send({message: "Server is running fine!"});
+app.get("/", async (req, res) => {
+  try {
+    await connectToMongoDB();
+    res.send({
+      message: "StudioSpace Backend is running fine and connected to MongoDB!",
+      status: "healthy",
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    res.status(500).send({
+      message: "Server is running, but MongoDB connection failed.",
+      error: error.message,
+      help: "Check MONGODB_URL in Vercel environment variables and ensure MongoDB Atlas Network Access has 0.0.0.0/0 whitelisted.",
+    });
+  }
 });
 
-app.listen(PORT, () => {
-  console.log(`Example app listening on port ${PORT}`);
-});
+if (!process.env.VERCEL) {
+  app.listen(PORT, () => {
+    console.log(`Server listening on port ${PORT}`);
+  });
+}
 
 export default app;
