@@ -8,7 +8,18 @@ const app = express();
 app.use(express.json());
 const PORT = process.env.PORT || 8000;
 
-app.use(cors());
+const allowedOrigins = [
+  "https://studiospace-frontend-theta.vercel.app",
+  "http://localhost:3000",
+  process.env.CLIENT_URL,
+].filter(Boolean);
+
+app.use(
+  cors({
+    origin: allowedOrigins,
+    credentials: true,
+  })
+);
 
 const client = new MongoClient(process.env.MONGODB_URL?.trim());
 
@@ -38,8 +49,12 @@ const verifyToken = async (req, res, next) => {
     return res.status(401).send({ msg: "Unauthorized!" });
   }
 
+  const clientUrl = (
+    process.env.CLIENT_URL || "https://studiospace-frontend-theta.vercel.app"
+  ).replace(/\/+$/, "");
+
   const JWKS = createRemoteJWKSet(
-    new URL(`${process.env.CLIENT_URL}/api/auth/jwks`),
+    new URL(`${clientUrl}/api/auth/jwks`),
   );
 
   try { 
